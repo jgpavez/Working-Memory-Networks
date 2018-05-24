@@ -75,8 +75,9 @@ def stack_layer(layers):
     return f
 
 # Model & Training parameters
-EMBED_HIDDEN_SIZE = 32
-LSTM_HIDDEN_UNITS = 32
+EMBED_HIDDEN_SIZE = 30
+LSTM_HIDDEN_UNITS = 30
+G_HIDDEN_UNITS = 128
 MXLEN = 30
 RUN_DEC = 0
 EPOCHS = 400
@@ -101,9 +102,9 @@ print(EMBED_HIDDEN_SIZE, LSTM_HIDDEN_UNITS, MXLEN, RUN_DEC, LEARNING_RATE, seed)
 save_str = '{0}_{1}_{2}_{3}_{4}'.format(EMBED_HIDDEN_SIZE, LSTM_HIDDEN_UNITS, MXLEN, RUN_DEC, seed)
 
 print ('Reading babi files')
-tar = tarfile.open('babi-tasks-v1-2.tar.gz')
+tar = tarfile.open('data/babi/babi-tasks-v1-2.tar.gz')
 
-mypath = 'tasks_1-20_v1-2/en-10k'
+mypath = 'data/babi/tasks_1-20_v1-2/en-10k'
 challenge_files = [f for f in listdir(mypath) if isfile(join(mypath, f))]
 challenge_files = ['tasks_1-20_v1-2/en-10k/' + f.replace('train', '{}') for f 
                    in challenge_files if 'train.txt' == f[-9:]]
@@ -146,7 +147,6 @@ print('-')
 print('Here\'s what a "story" tuple looks like (input, query, answer):')
 print(train_stories[0])
 print('-')
-print('Vectorizing the word sequences...')
 
 story_maxlen = MXLEN
 if enable_time:
@@ -159,7 +159,7 @@ print('Build model...')
 
 #------ Model Definition ---------
 
-def sentence_encoder(input_layer, PE_input, use_lstm=False, seq_lstm=None):
+def sentence_encoder(input_layer, use_lstm=False, seq_lstm=None):
     '''
         Encodes input
         if use_lstm: Process the sentence with a RNN
@@ -185,7 +185,7 @@ def sentence_encoder(input_layer, PE_input, use_lstm=False, seq_lstm=None):
 
     return position_encoding, layer_encoder, seq_lstm
 
-def input_module(x, u, adjacent=None, pos_encoder=None, use_lstm=False, seq_lstm=None):
+def input_module(x, u, adjacent=None, use_lstm=False, seq_lstm=None):
     '''
       Process input and create memories to be stored in short-term storage
     '''
@@ -194,18 +194,17 @@ def input_module(x, u, adjacent=None, pos_encoder=None, use_lstm=False, seq_lstm
                                   output_dim=EMBED_HIDDEN_SIZE,
                                   input_length=story_maxlen,
                                   init='glorot_normal')
-        if pos_encoder == None:
-            input_encoder_m = layer_encoder_m(x)
-        else:
-            if use_lstm:
-                if seq_lstm:
-                    input_encoder_m, layer_encoder_m,_ = sentence_encoder(x, pos_encoder, use_lstm=True,
-                                                                          seq_lstm=seq_lstm)
-                else:
-                    input_encoder_m, layer_encoder_m, seq_lstm = sentence_encoder(x, pos_encoder, 
-                                                                                 use_lstm=True, seq_lstm=None)
+
+        if use_lstm:
+            if seq_lstm:
+                input_encoder_m, layer_encoder_m,_ = sentence_encoder(x, use_lstm=True,
+                                                                      seq_lstm=seq_lstm)
             else:
-                input_encoder_m, layer_encoder_m,_ = sentence_encoder(x, pos_encoder)
+                input_encoder_m, layer_encoder_m, seq_lstm = sentence_encoder(x, 
+                                                                             use_lstm=True,
+                                                                             seq_lstm=None)
+        else:
+            input_encoder_m, layer_encoder_m,_ = sentence_encoder(x)
     else:
         input_encoder_m, layer_encoder_m = adjacent
 
@@ -268,9 +267,8 @@ def get_MLP_g(n):
     g network for the reasoning module
     '''
     r = []
-    layers_size = [128, 128, 128]
     for k in range(n):
-        size = layers_size[k]
+        size = G_HIDDEN_UNITS
         s = stack_layer([
             Dense(size, W_regularizer=l2(1e-3), bias=True, init='glorot_normal'),
             Activation('relu')
@@ -302,9 +300,6 @@ def reasoning_module(working_buffer):
 fact_input = Input(shape=(story_maxlen, facts_maxlen, ), dtype='int32', name='facts_input')
 question_input = Input(shape=(query_maxlen, ), dtype='int32', name='query_input')
 
-PE_input = Input(shape=(story_maxlen, facts_maxlen, EMBED_HIDDEN_SIZE,), dtype='float32', name='PE_input')
-PE_question = Input(shape=(query_maxlen, EMBED_HIDDEN_SIZE,), dtype='float32', name='PE_question')
-
 # Question encoding
 question_encoder = Embedding(input_dim=vocab_size,
                                output_dim=EMBED_HIDDEN_SIZE,
@@ -316,8 +311,8 @@ question_encoder = GRU(LSTM_HIDDEN_UNITS, return_sequences=False,
 
 # Input encoding
 
-layers, seq_lstm = input_module(fact_input, question_encoder, 
-                                   pos_encoder=PE_input, use_lstm=True, seq_lstm=None)
+layers, seq_lstm = input_module(fact_input, question_encoder,
+                                use_lstm=True, seq_lstm=None)
 memories, layers_memories = layers
 
 # Multiple Hops
@@ -452,15 +447,10 @@ for k in xrange(EPOCHS):
 
 print('Evaluating model...')
 
-#model.load_weights('models/weights_memn2n_ntm3_multifocus_mheads_{0}.hdf5'.format(save_str))
-
-#test_facts = np.array(test_facts)
-#test_facts = list(test_facts[np.array(range(len(test_facts)))])
+model.load_weights('models/weights_memn2n_ntm3_multifocus_mheads_{0}.hdf5'.format(save_str))
 
 inputs_test, queries_test, answers_test = vectorize_facts(test_facts, word_idx, story_maxlen, query_maxlen, facts_maxlen,
                                                          word_idx_answer=word_idx_answer, enable_time=enable_time)
-
-
 
 print('Total Model Accuracy: ')
 loss, acc = model.evaluate([inputs_test, queries_test], 
@@ -472,8 +462,8 @@ passed = 0
 total_acc = 0.
 for k, challenge in enumerate(challenge_files):
     print(challenge)   
-    inputs_test_p_s = inputs_test_p[k*1000:(k+1)*1000]
-    queries_test_p_s = queries_test_p[k*1000:(k+1)*1000]
+    inputs_test_p_s = inputs_test[k*1000:(k+1)*1000]
+    queries_test_p_s = queries_test[k*1000:(k+1)*1000]
     answers_test_s = answers_test[k*1000:(k+1)*1000]
 
     loss, acc = model.evaluate([inputs_test_p_s, queries_test_p_s], 
