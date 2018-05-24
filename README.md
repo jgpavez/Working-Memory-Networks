@@ -20,8 +20,8 @@ The model retains the relational reasoning abilities of the [Relation Network](h
 
 The code uses Python 2.7, Keras v1.2.2 and Theano v1.0.0. Please be sure to have those versions in your system.
 Start downloading the bAbI dataset in the folder `data/babi` and extract it:
-- wget http://www.thespermwhale.com/jaseweston/babi/tasks_1-20_v1-2.tar.gz
-- tar -xvf babi-tasks-v1-2.tar.gz
+- `wget http://www.thespermwhale.com/jaseweston/babi/tasks_1-20_v1-2.tar.gz`
+- `tar -xzvf tasks_1-20_v1-2.tar.gz`
 
 For NLVR, download the nlvr dataset from [here](https://github.com/clic-lab/nlvr) and save it to `data/nlvr`.
 
@@ -51,6 +51,6 @@ Where
 - `seed`: Random seed (int)
 
 To run the Relation Network on bAbI:
-- `python RN_babi.py`
+- `python RN_bAbI.py`
 
 *In some cases we found useful to restart training after 400 epochs with a much smaller learning rate of 1e-5. To do this you can run `python babi_working_memnn.py ez lz mx 1 1e-5 seed` using the same seed and configuration than the previous run.
