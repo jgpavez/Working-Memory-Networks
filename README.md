@@ -15,3 +15,34 @@ The model retains the relational reasoning abilities of the [Relation Network](h
 ![](/plots/paper/working_memory_networks.png)
 
 ## Instructions
+
+### Prerequisites
+
+The code uses Python 2.7, Keras v1.2.2 and Theano v1.0.0. Please be sure to have those versions in your system.
+Start downloading the bAbI dataset and save it to `data/babi`:
+- wget http://www.thespermwhale.com/jaseweston/babi/tasks_1-20_v1-2.tar.gz
+- tar -xvf babi-tasks-v1-2.tar.gz
+
+For NLVR, download the nlvr dataset from [here](https://github.com/clic-lab/nlvr) and save it to `data/nlvr`.
+
+### Running the code
+
+To run the Working Memory on bAbI [WMemNN_bAbI](/WMemNN_bAbI.py) code:
+- python babi_working_memnn.py ez lz mx rd lr seed
+Where: 
+- ez: Embedding size (int)
+- lz: GRU hidden units (int)
+- mx: Number of facts used (int)
+- rd: Run_code used when restarting training. (int)*
+- lr: Learning rate (float)
+- seed: Random seed (int)
+
+The run saves the model in ```models``` folder (be sure to have that folder).
+
+To run the Working Memory on NLVR:
+- python WMemNN_NLVR.py
+
+To run the Relation Network on bAbI:
+- python RN_bAbI.py
+
+* In some cases we found useful to restart training after 400 epochs with a much smaller learning rate of 1e-5. To do this you can run `python babi_working_memnn.py ez lz mx 1 1e-5 seed` using the same seed and configuration than the previous run.
