@@ -27,7 +27,7 @@ For NLVR, download the nlvr dataset from [here](https://github.com/clic-lab/nlvr
 
 ### Running the code
 
-To run the Working Memory on bAbI (```WMemNN_bAbI.py```) code:
+To run the Working Memory Network on bAbI (`WMemNN_bAbI.py`):
 - `python WMemNN_bAbI.py ez lz mx rd lr seed`
 
 Where: 
@@ -38,10 +38,17 @@ Where:
 - `lr`: Learning rate (float)
 - `seed`: Random seed (int)
 
-The run saves the model in ```models``` folder (be sure to have that folder).
+The code saves the model in the `models` folder (be sure to have that folder).
 
-To run the Working Memory on NLVR:
-- `python WMemNN_nlvr.py`
+To run the Working Memory Network on NLVR:
+- `python WMemNN_NLVR.py ez cz lz mx seed`
+
+Where
+- `ez`: Embedding size (int)
+- `cz`: CNN layer number of units (int)
+- `lz`: GRU hidden units (int)
+- `mx`: Number of facts used (int)
+- `seed`: Random seed (int)
 
 To run the Relation Network on bAbI:
 - `python RN_babi.py`
