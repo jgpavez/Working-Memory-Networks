@@ -1,5 +1,5 @@
 # Working Memory Networks
-Code to reproduce the results from the paper [Working Memory Networks: Augmenting Memory Networks with a Relational Reasoning Module]() accepted as long paper at ACL 2018.
+Code to reproduce the results from the paper [Working Memory Networks: Augmenting Memory Networks with a Relational Reasoning Module](https://arxiv.org/abs/1805.09354) accepted as long paper at ACL 2018.
 
 ```
 @inproceedings{pavez_2018_ACL,
