@@ -4,9 +4,10 @@ Code to reproduce the results from the paper [Working Memory Networks: Augmentin
 ```
 @inproceedings{pavez_2018_ACL,
   title={Working Memory Networks: Augmenting Memory Networks with a Relational Reasoning Module},
-  author={Juan Pavez, H\'ector Allende, H\'ector Allende-Cid},
-  booktitle={ACL},
-  year={2018}
+  author={Pavez, Juan and Allende,  H\'ector and Allende-Cid, H\'ector},
+  booktitle = "Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)    ",
+  year = "2018",
+  publisher = "Association for Computational Linguistics",
 }
 ```
 The Working Memory Network is a [Memory Network](https://arxiv.org/abs/1503.08895) architecture with a novel working memory storage and relational reasoning module.
