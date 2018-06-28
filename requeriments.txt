@@ -2,5 +2,5 @@ numpy
 Pillow
 autocorrect
 nltk
-keras==1.2.2
-theano==1.0.0
+keras==2.2.0
+tensorflow==1.8.0
