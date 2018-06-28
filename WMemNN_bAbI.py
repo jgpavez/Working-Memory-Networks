@@ -8,7 +8,7 @@ from __future__ import print_function
 import numpy as np
 import random
 import sys
-import theano
+import tensorflow as tf
 from functools import reduce
 import time
 import re
@@ -27,9 +27,7 @@ np.random.seed(seed)
 random.seed(seed)
 
 from keras.layers.embeddings import Embedding
-from keras.layers.core import Dense, Merge, Dropout, RepeatVector, Lambda, Permute, Activation, Reshape
-from keras.layers import Input, merge, TimeDistributed
-from keras.layers.recurrent import LSTM, GRU, SimpleRNN
+from keras.layers import Input, Dense, concatenate, add, Dropout, RepeatVector, Lambda, Permute, Activation, Reshape, TimeDistributed, GRU
 from keras.models import Sequential, Model
 from keras.callbacks import ModelCheckpoint, Callback, LearningRateScheduler
 from keras.optimizers import SGD, Adam
@@ -40,10 +38,12 @@ from keras.activations import softmax, tanh, sigmoid, hard_sigmoid, relu
 from keras.preprocessing.sequence import pad_sequences
 from keras.metrics import categorical_accuracy
 import keras.backend as K
-from keras.regularizers import l2, activity_l2
+from keras.regularizers import l2
 
-from s_model import sModel
 from utils import vectorize_facts, get_stories
+
+from tensorflow.python.client import device_lib
+print(device_lib.list_local_devices())
 
 def grouper(iterable, n, fillvalue=None):
     args = [iter(iterable)] * n
@@ -97,6 +97,8 @@ if len(sys.argv) > 5:
 
 if RUN_DEC > 0:
     EPOCHS = 20
+
+BATCH_SIZE = 32
     
 print(EMBED_HIDDEN_SIZE, LSTM_HIDDEN_UNITS, MXLEN, RUN_DEC, LEARNING_RATE, seed)
 save_str = '{0}_{1}_{2}_{3}_{4}'.format(EMBED_HIDDEN_SIZE, LSTM_HIDDEN_UNITS, MXLEN, RUN_DEC, seed)
@@ -167,7 +169,7 @@ def sentence_encoder(input_layer, use_lstm=False, seq_lstm=None):
     layer_encoder = Embedding(input_dim=vocab_size,
                             output_dim=EMBED_HIDDEN_SIZE,
                             input_length=story_maxlen,
-                            init='glorot_normal')
+                            embeddings_initializer='glorot_normal')
     input_encoder = layer_encoder(input_layer)
 
     input_encoder = Lambda(lambda x: x, 
@@ -180,7 +182,7 @@ def sentence_encoder(input_layer, use_lstm=False, seq_lstm=None):
         if seq_lstm:
             position_encoding = TimeDistributed(seq_lstm)(position_encoding)
         else:
-            seq_lstm = GRU(LSTM_HIDDEN_UNITS, return_sequences=False, init='glorot_normal')
+            seq_lstm = GRU(LSTM_HIDDEN_UNITS, return_sequences=False, kernel_initializer='glorot_normal')
             position_encoding = TimeDistributed(seq_lstm)(position_encoding)
 
     return position_encoding, layer_encoder, seq_lstm
@@ -193,7 +195,7 @@ def input_module(x, u, adjacent=None, use_lstm=False, seq_lstm=None):
         layer_encoder_m = Embedding(input_dim=vocab_size,
                                   output_dim=EMBED_HIDDEN_SIZE,
                                   input_length=story_maxlen,
-                                  init='glorot_normal')
+                                  embeddings_initializer='glorot_normal')
 
         if use_lstm:
             if seq_lstm:
@@ -221,27 +223,29 @@ def attention_module(memories, u, use_softmax=True, MLP=None, n_heads=1):
     mems = []
     for k in range(n_heads):
         # results are similar for linear or tanh activation
-        head = TimeDistributed(Dense(LSTM_HIDDEN_UNITS,  W_regularizer=l2(1e-3),
-                                     activation='tanh', bias=False))(memories)
-        memory = merge([head, u],
-                       mode='dot',
-                       dot_axes=[2, 1])
+        head = TimeDistributed(Dense(LSTM_HIDDEN_UNITS,  kernel_regularizer=l2(1e-3),
+                                     activation='tanh', use_bias=False))(memories)
+
+        head = Lambda(lambda x: x, output_shape=(story_maxlen, LSTM_HIDDEN_UNITS))(head)
+        memory = Lambda(lambda x: tf.einsum('aij,aj->ai', x[0], x[1]),
+                        output_shape=(story_maxlen, ))([head, u])
 
 
-        layer_memory = Lambda(lambda x: K.softmax(x/(np.sqrt(LSTM_HIDDEN_UNITS, dtype='float32'))))
+        layer_memory = Lambda(lambda x: K.softmax(x/(np.sqrt(LSTM_HIDDEN_UNITS, dtype='float32'))),
+                             output_shape=(story_maxlen,))
 
         memory = layer_memory(memory)
 
-        head_output = merge([memory, memories],
-                      mode = 'dot',
-                      dot_axes=[1,1])  
+
+        head_output = Lambda(lambda x: tf.einsum('aji,aj->ai', x[0], x[1]),
+                             output_shape=(LSTM_HIDDEN_UNITS, ))([memories, memory])
         mems.append(memory)
         head_outs.append(head_output)
 
-    memories_2 = merge(head_outs, mode='concat', concat_axis=-1)
+    memories_2 = concatenate(head_outs)
 
-    output= Dense(LSTM_HIDDEN_UNITS, W_regularizer=l2(1e-3), 
-                  bias=False, init='glorot_normal')(memories_2)
+    output= Dense(LSTM_HIDDEN_UNITS, kernel_regularizer=l2(1e-3), 
+                  use_bias=False, kernel_initializer='glorot_normal')(memories_2)
     output_mem = output
     if MLP:
         output_mem = MLP(output_mem)
@@ -256,7 +260,7 @@ def get_MLP_t(n):
     for k in range(n):
         size = LSTM_HIDDEN_UNITS if k != 0 or n == 1 else LSTM_HIDDEN_UNITS // 2
         s = stack_layer([
-            Dense(size, W_regularizer=l2(1e-3), bias=True, init='glorot_normal'),
+            Dense(size, kernel_regularizer=l2(1e-3), use_bias=True, kernel_initializer='glorot_normal'),
             Activation('linear')
         ])
         r.append(s)
@@ -270,7 +274,7 @@ def get_MLP_g(n):
     for k in range(n):
         size = G_HIDDEN_UNITS
         s = stack_layer([
-            Dense(size, W_regularizer=l2(1e-3), bias=True, init='glorot_normal'),
+            Dense(size, kernel_regularizer=l2(1e-3), use_bias=True, kernel_initializer='glorot_normal'),
             Activation('relu')
         ])
         r.append(s)
@@ -284,14 +288,13 @@ def reasoning_module(working_buffer):
     relations = []
     for fact_object_1 in working_buffer:
         for fact_object_2 in working_buffer:
-            relations.append(merge([fact_object_1, fact_object_2, question_encoder], mode='concat',
-                                  output_shape=(None, LSTM_HIDDEN_UNITS * 3,)))
+            relations.append(concatenate([fact_object_1, fact_object_2, question_encoder]))
     g_MLP_j = get_MLP_g(3) # g network
     mid_relations = []
 
     for r in relations:
         mid_relations.append(g_MLP_j(r))
-    combined_relation = merge(mid_relations, mode='sum')
+    combined_relation = add(mid_relations)
     return combined_relation
 
 #---------- Building the model ------------------
@@ -304,10 +307,10 @@ question_input = Input(shape=(query_maxlen, ), dtype='int32', name='query_input'
 question_encoder = Embedding(input_dim=vocab_size,
                                output_dim=EMBED_HIDDEN_SIZE,
                                input_length=query_maxlen,
-                               init='glorot_normal')(question_input)
+                               embeddings_initializer='glorot_normal')(question_input)
 
 question_encoder = GRU(LSTM_HIDDEN_UNITS, return_sequences=False, 
-                       init='glorot_normal')(question_encoder)
+                       kernel_initializer='glorot_normal')(question_encoder)
 
 # Input encoding
 
@@ -345,20 +348,21 @@ o4,o4_, mem4 = attention_module(memories3, o3_, use_softmax=True,
 working_buffer = [o1,o2,o3,o4]
 output = reasoning_module(working_buffer)
 
-response = Dense(len(vocab_answer), activation='softmax', bias=False,
-                W_regularizer=l2(1e-3), init='glorot_normal')(output)
+response = Dense(len(vocab_answer), activation='softmax', use_bias=False,
+                kernel_regularizer=l2(1e-3), kernel_initializer='glorot_normal')(output)
 
 # --------- Compiling Model -----------------
-# sModel is a modification that avoid batch averaging
-model = sModel(input=[fact_input, question_input], output=[response])
-
+model = Model(inputs=[fact_input, question_input], outputs=[response])
 
 sgd = SGD(clipnorm=40.)
 adam = Adam(lr=LEARNING_RATE, clipnorm=40.)
 
 print('Compiling model...')
 
-model.compile(loss='categorical_crossentropy', optimizer=adam, metrics=['accuracy'])
+model.compile(loss='categorical_crossentropy', loss_weights=[float(BATCH_SIZE)], optimizer=adam, metrics=['accuracy'])
+
+print(model.summary())
+
 if RUN_DEC > 0:
     save_old_str = '{0}_{1}_{2}_{3}_{4}'.format(EMBED_HIDDEN_SIZE, LSTM_HIDDEN_UNITS, MXLEN, RUN_DEC-1, seed)
     model.load_weights('models/weights_memn2n_ntm3_multifocus_mheads_{0}.hdf5'.format(save_old_str))
@@ -400,7 +404,6 @@ inputs_valid, queries_valid, answers_valid = vectorize_facts(valid_facts, word_i
                                                              story_maxlen, query_maxlen, facts_maxlen,
                                                              word_idx_answer=word_idx_answer, enable_time=enable_time)
 
-BATCH_SIZE = 32
 
 show_batch_interval = 1000
 N_BATCHS = len(train_facts) // BATCH_SIZE

@@ -19,7 +19,7 @@ The model retains the relational reasoning abilities of the [Relation Network](h
 
 ### Prerequisites
 
-The code uses Python 2.7, Keras v1.2.2 and Theano v1.0.0. Please be sure to have those versions in your system.
+The code uses Python 2.7, Keras v2.2.2 and Tensorflow v1.8.0. Please be sure to have those versions in your system.
 Start downloading the bAbI dataset in the folder `data/babi` and extract it:
 - `wget http://www.thespermwhale.com/jaseweston/babi/tasks_1-20_v1-2.tar.gz`
 - `tar -xzvf tasks_1-20_v1-2.tar.gz`

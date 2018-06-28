@@ -7,29 +7,23 @@
 from __future__ import print_function
 from keras.utils.data_utils import get_file
 from keras.layers.embeddings import Embedding
-from keras.layers.core import Dense, Merge, Dropout, RepeatVector, Lambda, Permute, Activation, Masking, Reshape
-from keras.layers import Input, merge, TimeDistributed
-from keras.layers.recurrent import LSTM, GRU, SimpleRNN
+from keras.layers import Input, Dense, concatenate, add, Dropout, RepeatVector, Lambda, Permute, Activation, Reshape, TimeDistributed, GRU, Conv2D, MaxPooling2D, AveragePooling2D
 from keras.models import Sequential, Model
 from keras.optimizers import SGD, Adam
-from keras.layers.convolutional import Conv2D, MaxPooling2D, AveragePooling2D
 
 import keras.backend as K
-from keras.regularizers import l2, activity_l2
+from keras.regularizers import l2
 from keras.layers.core import Layer
 
-from keras import initializations, regularizers, constraints
 from keras.layers.normalization import BatchNormalization
-
 
 from functools import reduce
 import tarfile
 import numpy as np
 import random
 
-import theano
 import sys
-#import tensorflow as tf
+import tensorflow as tf
 seed = 1234
 if len(sys.argv) > 5:
     seed = int(sys.argv[5])
@@ -175,7 +169,7 @@ print('Build model...')
 # ----- Convolutional Layer ----
 def bn_layer(x, conv_unit):
     def f(inputs):
-        md = Conv2D(x, conv_unit, conv_unit, border_mode='same', init='he_normal')(inputs)
+        md = Conv2D(x, (conv_unit, conv_unit), padding='same', kernel_initializer='he_normal')(inputs)
         #md = BatchNormalization()(md)
         #md = LayerNorm()(md)
         return Activation('relu')(md)
@@ -188,7 +182,7 @@ def conv_net_model():
     model = MaxPooling2D((3, 3), (3, 3))(model)
     model = bn_layer(CNN_EMBED_SIZE-2, 3)(model)
     model = MaxPooling2D((3, 3), (2, 2))(model)
-    out_model = Model(input=[inputs], output=[model])
+    out_model = Model(inputs=[inputs], outputs=[model])
     return out_model
 
 def slice_1(t):
@@ -236,8 +230,7 @@ def input_module(x, cnn_model):
     for k, m in enumerate(features):
         features[k] = Reshape((1, CNN_EMBED_SIZE), input_shape=(CNN_EMBED_SIZE, ))(m)
 
-    feature = merge(features, mode='concat', concat_axis=-2,
-                    output_shape=(len(features), CNN_EMBED_SIZE, ))
+    feature = concatenate(features, axis=-2)
 
     return feature
 
@@ -249,14 +242,13 @@ def attention_module(memories, question_encoder, use_softmax=True, MLP=None, mem
 
     question_encoder_repeat = RepeatVector(CNN_FEATURES_SIZE)(question_encoder)
 
-    memory_question = merge([memories, question_encoder_repeat], mode='concat',
-                           output_shape=(CNN_FEATURES_SIZE, CNN_EMBED_SIZE + LSTM_HIDDEN_UNITS))
+    memory_question = concatenate([memories, question_encoder_repeat])
 
     input_layer = Input(shape=(CNN_EMBED_SIZE + LSTM_HIDDEN_UNITS,))
-    out = Dense(256, activation='relu', W_regularizer=l2(1e-3))(input_layer)
-    out = Dense(128, activation='relu', W_regularizer=l2(1e-3))(out)
-    out = Dense(1, activation='tanh', W_regularizer=l2(1e-3))(out)
-    model = Model(input=input_layer, output=out)
+    out = Dense(256, activation='relu', kernel_regularizer=l2(1e-3))(input_layer)
+    out = Dense(128, activation='relu', kernel_regularizer=l2(1e-3))(out)
+    out = Dense(1, activation='tanh', kernel_regularizer=l2(1e-3))(out)
+    model = Model(inputs=input_layer, outputs=out)
 
     memory = TimeDistributed(model)(memory_question)
     memory = Reshape((CNN_FEATURES_SIZE,),
@@ -267,11 +259,9 @@ def attention_module(memories, question_encoder, use_softmax=True, MLP=None, mem
     else:
         layer_memory = Lambda(lambda x: x)
     memory = layer_memory(memory)
-    
-    output = merge([memory, memories],
-                  mode = 'dot',
-                   dot_axes=[1,1])
 
+    output = Lambda(lambda x: tf.einsum('aji,aj->ai', x[0], x[1]),
+                   output_shape=(CNN_EMBED_SIZE, ))([memories, memory])
     output_mem = output
 
     if MLP:
@@ -283,7 +273,7 @@ def get_MLP_t(n):
     for k in range(n):
         size = LSTM_HIDDEN_UNITS if k != 0 or n == 1 else LSTM_HIDDEN_UNITS // 2
         s = stack_layer([
-            Dense(size, bias=True, init='glorot_normal', W_regularizer=l2(1e-3)),
+            Dense(size, use_bias=True, kernel_initializer='glorot_normal', kernel_regularizer=l2(1e-3)),
             #BatchNormalization(mode=2),
             Activation('relu')
         ])
@@ -299,7 +289,7 @@ def get_MLP_g(n):
     for k in range(n):
         MLP_unit = units_mlp[k]
         s = stack_layer([
-            Dense(MLP_unit, bias=True, init='glorot_normal'),
+            Dense(MLP_unit, use_bias=True, kernel_initializer='glorot_normal'),
             #BatchNormalization(mode=2),
             Activation('relu'),
         ])
@@ -314,14 +304,13 @@ def reasoning_module(working_buffer):
     relations = []
     for fact_object_1 in working_buffer:
         for fact_object_2 in working_buffer:
-            relations.append(merge([fact_object_1, fact_object_2, question_encoder], mode='concat',
-                                  output_shape=(None, LSTM_HIDDEN_UNITS * 3,)))
+            relations.append(concatenate([fact_object_1, fact_object_2, question_encoder]))
     g_MLP_g = get_MLP_g(3) # g network
     mid_relations = []
 
     for r in relations:
         mid_relations.append(g_MLP_g(r))
-    combined_relation = merge(mid_relations, mode='sum')
+    combined_relation = add(mid_relations)
     return combined_relation
 
 #---------- Building the model ------------------
@@ -336,14 +325,14 @@ question_input = Input(shape=(mxlen, ), dtype='int32', name='query_input')
 question_encoder = Embedding(input_dim=vocab_size,
                   output_dim=EMBED_HIDDEN_SIZE,
                   input_length=mxlen,
-                  init='glorot_normal',
+                  embeddings_initializer='glorot_normal',
                   trainable=True)(question_input)
 
 question_encoder = Lambda(lambda x: x, 
                        output_shape=(mxlen, EMBED_HIDDEN_SIZE,))(question_encoder)
 
 question_encoder = GRU(LSTM_HIDDEN_UNITS, return_sequences=False, 
-                       init='glorot_normal')(question_encoder)
+                       kernel_initializer='glorot_normal')(question_encoder)
 
 # Input encoding
 conv_model = conv_net_model()
@@ -395,10 +384,10 @@ def bn_dense(x, MLP_unit):
     return y
 
 rn = bn_dense(output, 32)
-pred = Dense(1, activation='sigmoid', init='glorot_normal', bias=True)(rn)
+pred = Dense(1, activation='sigmoid', kernel_initializer='glorot_normal', use_bias=True)(rn)
 
 # --------- Compiling Model -----------------
-model = Model(input=[fact_input_1, fact_input_2, fact_input_3, question_input], output=[pred])
+model = Model(inputs=[fact_input_1, fact_input_2, fact_input_3, question_input], outputs=[pred])
 
 #print(model.summary())
 
